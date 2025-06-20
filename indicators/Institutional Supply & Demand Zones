@@ -1,0 +1,200 @@
+// =============================================================================================================
+// This Pine Script™ is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License.
+// To view a copy of this license, visit http://creativecommons.org/licenses/by-nc/4.0/ or send a letter to
+// Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+// =============================================================================================================
+// github @ 800cherries, telegram @ fortracyhyde
+
+//@version=5
+indicator("Institutional Supply & Demand Zones", overlay=true, max_boxes_count = 500)
+
+//inputs
+candleDifferenceScale = input.float(defval = 1.8, minval = 1, title = 'Zone Difference Scale', tooltip = 'The scale of how much a candle needs to be larger than a previous to be considered a zone (minimum value 1.0, default 1.8)', group = 'Zone Settings')
+
+zoneOffset = input.int(defval = 15, minval = 0, title="Zone Extension", group = 'Display Settings', tooltip = 'How much to extend zones to the right of latest bar in bars')
+displayLowerTFZones = input.bool(false, title="Display Lower Timeframe Zones", group = 'Display Settings', tooltip = 'Whether to or not to display zones from a lower timeframe (ie. 2h zones on 4h timeframe, Recommended OFF)')
+
+supplyEnable = input(true, title = "Enable Supply Zones", group = "Zone Personalization")
+supplyColor = input.color(defval = color.rgb(242, 54, 69, 94), title = 'Supply Background Color', group = 'Zone Personalization')
+supplyBorderColor = input.color(defval = color.rgb(209, 212, 220, 90), title = 'Supply Border Color', group = 'Zone Personalization')
+
+demandEnable = input(true, title = "Enable Demand Zones", group = "Zone Personalization")
+demandColor = input.color(defval = color.rgb(76, 175, 80, 94), title = 'Demand Background Color', group = 'Zone Personalization')
+demandBorderColor = input.color(defval = color.rgb(209, 212, 220, 80), title = 'Demand Border Color', group = 'Zone Personalization')
+
+textEnable = input(true, title = "Display Text", group = 'Text Settings')
+displayHL = input.bool(false, title="Display High/Low", group = 'Text Settings', tooltip = 'Whether to or not to display the tops and bottoms of a zone as text (ie. Top: 4000.00 Bottom: 3900.00)')
+textColor = input.color(defval = color.rgb(255, 255, 255), title = 'Text Color', group = 'Text Settings')
+textSize = input.string("Small", title="Text Size", options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group = 'Text Settings')
+halign = input.string("Right", title="Horizontal Alignment", options=["Left", "Center", "Right"], group = 'Text Settings')
+supplyValign = input.string("Bottom", title="Vertical Alignment (Supply)", options=["Top", "Center", "Bottom"], group = 'Text Settings')
+demandValign = input.string("Top", title="Vertical Alignment (Demand)", options=["Top", "Center", "Bottom"], group = 'Text Settings')
+
+display30m = input.bool(true, title="Show 30m Zones", group = 'Timeframe Options')
+display45m = input.bool(true, title="Show 45m Zones", group = 'Timeframe Options')
+display1h = input.bool(true, title="Show 1h Zones", group = 'Timeframe Options')
+display2h = input.bool(true, title="Show 2h Zones", group = 'Timeframe Options')
+display3h = input.bool(true, title="Show 3h Zones", group = 'Timeframe Options')
+display4h = input.bool(true, title="Show 4h Zones", group = 'Timeframe Options')
+displayD = input.bool(false, title="Show 1D Zones", group = 'Timeframe Options')
+displayW = input.bool(false, title="Show 1W Zones", group = 'Timeframe Options')
+
+// variables
+
+currentTimeframe = timeframe.period
+
+if currentTimeframe == 'D'
+    currentTimeframe := '1440'
+if currentTimeframe == 'W'
+    currentTimeframe := '10080'
+if displayLowerTFZones
+    currentTimeframe := '0'
+
+momentCTD = math.round(time(timeframe.period) + (zoneOffset * 60000 * str.tonumber(currentTimeframe)))
+
+textSize := switch textSize
+    "Auto" => size.auto
+    "Tiny" => size.tiny
+    "Small" => size.small
+    "Normal" => size.normal
+    "Large"   => size.large
+    "Huge" => size.huge
+
+halign := switch halign
+    'Left'=> text.align_left
+    'Center' => text.align_center
+    'Right' => text.align_right
+
+supplyValign := switch supplyValign
+    'Bottom'=> text.align_bottom
+    'Center' => text.align_center
+    'Top' => text.align_top
+
+demandValign := switch demandValign
+    'Bottom'=> text.align_bottom
+    'Center' => text.align_center
+    'Top' => text.align_top
+
+var box[] supply_HT = array.new_box()
+var box[] demand_HT = array.new_box()
+
+//plotting zones
+
+createSupplyDemandZones(timeframe) =>
+
+    [open_HT, high_HT, low_HT, close_HT] = request.security(syminfo.tickerid, timeframe, [open[1], high[1], low[1], close[1]], lookahead = barmerge.lookahead_on)
+
+    timeframeFormatted = switch timeframe
+        '1' => '1m'
+        '3' => '3m'
+        '5' => '5m'
+        '16' => '15m'
+        '30' => '30m'
+        '45' => '45m'
+        '60' => '1h'
+        '120' => '2h'
+        '180' => '3h'
+        '240' => '4h'
+        'D' => '1D'
+        'W' => '1W'
+
+    redCandle_HT = close_HT < open_HT
+    greenCandle_HT = close_HT > open_HT
+    neutralCandle_HT = close_HT == open_HT
+    candleChange_HT = math.abs(close_HT - open_HT)
+
+    var float bottomBox_HT = na
+    var float topBox_HT = na
+    momentCTD_HT = time(timeframe)[2]
+
+    if (((redCandle_HT and greenCandle_HT[1]) or (redCandle_HT and neutralCandle_HT[1])) and (candleChange_HT / candleChange_HT[1]) >= candleDifferenceScale and barstate.isconfirmed[1] and supplyEnable and close_HT[1] >= close_HT and open_HT[1] <= open_HT)
+        if displayHL
+            timeframeFormatted := timeframeFormatted + '\nTop: ' + str.tostring(topBox_HT) + '\nBottom: ' + str.tostring(open_HT[1])
+        if high_HT >= high_HT[1]
+            topBox_HT := high_HT
+        else 
+            topBox_HT := high_HT[1]
+
+        box supply = box.new(left=momentCTD_HT, top=topBox_HT, right=momentCTD, bgcolor=supplyColor, bottom=open_HT[1], xloc=xloc.bar_time)
+        box.set_border_color(supply, supplyBorderColor)
+        if textEnable
+            box.set_text(supply, timeframeFormatted)
+            box.set_text_size(supply, textSize)
+            box.set_text_color(supply, textColor)
+            box.set_text_halign(supply, halign)
+            box.set_text_valign(supply, supplyValign)
+        array.push(supply_HT, supply)
+
+    if (((greenCandle_HT and redCandle_HT[1]) or (greenCandle_HT and neutralCandle_HT[1])) and (candleChange_HT / candleChange_HT[1]) >= candleDifferenceScale and barstate.isconfirmed[1] and demandEnable and close_HT[1] <= close_HT and open_HT[1] >= open_HT) 
+        if displayHL
+            timeframeFormatted := timeframeFormatted + '\nTop: ' + str.tostring(open_HT[1]) + '\nBottom: ' + str.tostring(bottomBox_HT)
+        if low_HT <= low_HT[1]
+            bottomBox_HT := low_HT
+        else 
+            bottomBox_HT := low_HT[1]
+
+        box demand = box.new(left=momentCTD_HT, top=open_HT[1], right=momentCTD, bottom=bottomBox_HT, bgcolor=demandColor, xloc=xloc.bar_time)
+        box.set_border_color(demand, demandBorderColor)
+        if textEnable
+            box.set_text(demand, timeframeFormatted)
+            box.set_text_size(demand, textSize)
+            box.set_text_color(demand, textColor)
+            box.set_text_halign(demand, halign)
+            box.set_text_valign(demand, demandValign)
+        array.push(demand_HT, demand)
+
+// initiation
+
+// remove comments to add these zones to the chart (warning: this will break replay mode)
+// if str.tonumber(currentTimeframe) <= 5
+//    createSupplyDemandZones('5')
+//if str.tonumber(currentTimeframe) <= 15
+//    createSupplyDemandZones('15')
+//if str.tonumber(currentTimeframe) <= 10
+//    createSupplyDemandZones('10')
+//if str.tonumber(currentTimeframe) <= 15
+//    createSupplyDemandZones('15')
+if display30m and str.tonumber(currentTimeframe) <= 30
+    createSupplyDemandZones('30')
+if display45m and str.tonumber(currentTimeframe) <= 45
+    createSupplyDemandZones('45')
+if display1h and str.tonumber(currentTimeframe) <= 60
+    createSupplyDemandZones('60') 
+if display2h and str.tonumber(currentTimeframe) <= 120
+    createSupplyDemandZones('120')
+if display3h and str.tonumber(currentTimeframe) <= 180
+    createSupplyDemandZones('180')
+if display4h and str.tonumber(currentTimeframe) <= 240
+    createSupplyDemandZones('240')
+if displayD and str.tonumber(currentTimeframe) <= 1440
+    createSupplyDemandZones('D')
+if displayW and str.tonumber(currentTimeframe) <= 10080
+    createSupplyDemandZones('W')
+
+// remove broken zones
+
+i = 0
+while i < array.size(supply_HT) and array.size(supply_HT) > 0
+    box currentBox = array.get(supply_HT, i)
+    float breakLevel = box.get_top(currentBox)
+    if high > breakLevel 
+        array.remove(supply_HT, i)
+        box.delete(currentBox)
+        int(na)
+    else
+        box.set_right(currentBox, momentCTD)
+        i += 1
+        int(na)
+
+i2 = 0
+while i2 < array.size(demand_HT) and array.size(demand_HT) > 0
+    box currentBox = array.get(demand_HT, i2)
+    float breakLevel = box.get_bottom(currentBox)
+    if low < breakLevel 
+        array.remove(demand_HT, i2)
+        box.delete(currentBox)
+        int(na)
+    else
+        box.set_right(currentBox, momentCTD)
+        i2 += 1
+        int(na)

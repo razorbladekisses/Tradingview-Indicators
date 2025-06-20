@@ -1,0 +1,182 @@
+// =============================================================================================================
+// This Pine Script™ is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License.
+// To view a copy of this license, visit http://creativecommons.org/licenses/by-nc/4.0/ or send a letter to
+// Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+// =============================================================================================================
+// github @ 800cherries, telegram @ fortracyhyde
+
+//@version=5
+indicator("Reversal Pivot Points", overlay=true, max_lines_count=500, max_labels_count=500)
+
+//inputs
+pivotTimeframe = input.string("15m", title="Pivot Timeframe", options=["1m", "3m", "5m", "10m", "15m", "30m", "45m", "1h", "2h", "3h", "4h", "D", "W"], group='Pivot Settings', tooltip='The timeframe the script looks for pivots at')
+pivotLeftBars = input.int(defval=3, title="Left Bars Limit", minval=1, group='Pivot Settings', tooltip='Prevents pivots from being created if there is already one X candles back')
+pivotRightBars = input.int(defval=2, title="Right Bars Limit", minval=1, group='Pivot Settings', tooltip='Prevents pivots from being created only after if the pivot is still valid after X amount of candles')
+onClose = input.bool(defval=false, title="Remove On Close (ROC)", group='Pivot Settings', tooltip='Only removes pivot if price action closes under/above the pivot')
+onCloseTimeframe = input.string("15m", title="ROC Timeframe", options=["1m", "3m", "5m", "10m", "15m", "30m", "45m", "1h", "2h", "3h", "4h", "D", "W"], group='Pivot Settings', tooltip='The timeframe ROC looks at to see if any candles on that timeframe closed under/above the level')
+waitForClose = input.bool(defval=false, title="Wait For Close", group='Pivot Settings', tooltip='Removes pivot only after the current candle closes')
+
+resistanceEnable = input(true, title="Enable Resistance Pivots", group="Line Settings")
+resistanceColor = input.color(defval=color.rgb(255, 255, 255), title='Resistance Line Color', group='Line Settings')
+supportEnable = input(true, title="Enable Support Pivots", group="Line Settings")
+supportColor = input.color(defval=color.rgb(255, 255, 255), title='Support Line Color', group='Line Settings')
+extensionType = input.string("Current", title="Line Extension Type", options=["Current", "Left", "Right", "Both"], group='Line Settings')
+offset = input.int(defval=15, title="Line Offset", group='Line Settings', tooltip='How much to offset (in bars) the line and label from the current candle')
+lineType = input.string("Solid (─)", title="Line Style", options=["Solid (─)", "Dotted (┈)", "Dashed (╌)", "Arrow Left (←)", "Arrow Right (→)", "Arrows Both (↔)"], group='Line Settings')
+
+displayLevel = input.bool(false, title="Display Level", group='Text Settings', tooltip='Whether to or not to display the price of the pivot')
+displayPerfectLevel = input.bool(defval=false, title="Display Perfect Level", group='Text Settings', tooltip='Labels a level if price action perfectly bounces off of it labeled as PDB/PDT (does not work if "Remove On Close" is enabled)')
+textColor =input.color(defval=color.rgb(255, 255, 255), title='Text Color', group='Text Settings')
+textSize =input.string("Small", title="Text Size", options=["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group='Text Settings')
+
+// variables
+pivotTimeframe := switch pivotTimeframe
+    '1m' => '1'
+    '3m' => '3'
+    '5m' => '5'
+    '10m' => '10'
+    '15m' => '15'
+    '30m' => '30'
+    '45m' => '45'
+    '1h' => '60'
+    '2h' => '120'
+    '3h' => '180'
+    '4h' => '240'
+    'D' => 'D'
+    'W' => 'W'
+
+onCloseTimeframe := switch onCloseTimeframe
+    '1m' => '1'
+    '3m' => '3'
+    '5m' => '5'
+    '10m' => '10'
+    '15m' => '15'
+    '30m' => '30'
+    '45m' => '45'
+    '1h' => '60'
+    '2h' => '120'
+    '3h' => '180'
+    '4h' => '240'
+    'D' => 'D'
+    'W' => 'W'
+
+extensionType := switch extensionType
+    "Current" => extend.none
+    "Left" => extend.left
+    "Right" => extend.right
+    "Both" => extend.both
+
+lineType := switch lineType
+    "Solid (─)" => line.style_solid
+    "Dotted (┈)" => line.style_dotted
+    "Dashed (╌)" => line.style_dashed
+    "Arrow Left (←)" => line.style_arrow_left
+    "Arrow Right (→)" => line.style_arrow_right
+    "Arrows Both (↔)" => line.style_arrow_both
+
+textSize := switch textSize
+    "Auto" => size.auto
+    "Tiny" => size.tiny
+    "Small" => size.small
+    "Normal" => size.normal
+    "Large"   => size.large
+    "Huge" => size.huge
+
+[OCTF_Close] = request.security(syminfo.tickerid, onCloseTimeframe, [close[1]])
+momentCTD = math.round(time(timeframe.period) + (offset * 60000 * (timeframe.in_seconds() / 60)))
+var line[] resistance_HT = array.new_line()
+var line[] support_HT = array.new_line()
+var label[] resistance_labels = array.new_label()
+var label[] support_labels = array.new_label()
+var float[] resistance_levels = array.new_float()
+var float[] support_levels = array.new_float()
+
+// create pivots
+createPivots(timeframe) =>
+    [ph, pl] = request.security(syminfo.tickerid, timeframe, [math.round_to_mintick(ta.pivothigh(pivotLeftBars, pivotRightBars)), math.round_to_mintick(ta.pivotlow(pivotLeftBars, pivotRightBars))], gaps=barmerge.gaps_on)
+    momentCTD_HT = time(timeframe)[pivotRightBars]
+
+    // resistance pivots
+    if not na(ph) and not array.includes(resistance_levels, ph)
+        line ph_line = line.new(x1=momentCTD_HT, y1=ph, x2=momentCTD, y2=ph, extend=extensionType, xloc=xloc.bar_time, color=resistanceColor, style=lineType)
+        array.push(resistance_HT, ph_line)
+        array.push(resistance_levels, ph)
+        if displayLevel
+            label ph_label = label.new(x=momentCTD, y=ph, style=label.style_none, text=str.tostring(ph), xloc=xloc.bar_time, textcolor=textColor, size=textSize)
+            array.push(resistance_labels, ph_label)            
+            
+    // support pivots
+    if not na(pl) and not array.includes(support_levels, pl)
+        line pl_line = line.new(x1=momentCTD_HT, y1=pl, x2=momentCTD, y2=pl, extend=extensionType, xloc=xloc.bar_time, color=supportColor, style=lineType)
+        array.push(support_HT, pl_line)
+        array.push(support_levels, pl)
+        if displayLevel
+            label pl_label = label.new(x=momentCTD, y=pl, style=label.style_none, text=str.tostring(pl), xloc=xloc.bar_time, textcolor=textColor, size=textSize)
+            array.push(support_labels, pl_label)
+
+// init 
+if not timeframe.isseconds and timeframe.in_seconds() <= timeframe.in_seconds(pivotTimeframe)
+    createPivots(pivotTimeframe)
+
+// remove broken pivots
+i=0
+while i < array.size(resistance_HT) and array.size(resistance_HT) > 0
+    line currentLine = array.get(resistance_HT, i)
+    float breakLevel = line.get_y1(currentLine)
+    if ((high > breakLevel and not onClose) or (OCTF_Close > breakLevel and onClose)) and ((waitForClose and barstate.isconfirmed) or not waitForClose)
+        alert(message="Resistance Crossing @ " + str.tostring(breakLevel))
+        array.remove(resistance_HT, i)
+        if array.size(resistance_levels) > i
+            array.remove(resistance_levels, i)
+        line.delete(currentLine)        
+        if displayLevel and array.size(resistance_labels) > i
+            label currentLineLabel = array.get(resistance_labels, i) 
+            array.remove(resistance_labels, i)
+            label.delete(currentLineLabel)
+        int(na)
+    else if high == breakLevel and displayPerfectLevel and displayLevel and array.size(resistance_labels) > i  and not onClose
+        label currentLineLabel = array.get(resistance_labels, i) 
+        line.set_x2(currentLine, momentCTD)
+        label.set_x(currentLineLabel, momentCTD)
+        if not str.contains(label.get_text(currentLineLabel), " PDT")
+            label.set_text(currentLineLabel, str.tostring(high) + " PDT")
+        i += 1
+        int(na)
+    else
+        line.set_x2(currentLine, momentCTD)
+        if displayLevel and array.size(resistance_labels) > i
+            label currentLineLabel = array.get(resistance_labels, i) 
+            label.set_x(currentLineLabel, momentCTD)
+        i += 1
+        int(na)
+
+i2=0
+while i2 < array.size(support_HT) and array.size(support_HT) > 0
+    line currentLine = array.get(support_HT, i2)
+    float breakLevel = line.get_y1(currentLine)
+    if ((low < breakLevel and not onClose) or (OCTF_Close < breakLevel and onClose)) and ((waitForClose and barstate.isconfirmed) or not waitForClose)
+        alert(message="Support Crossing @ " + str.tostring(breakLevel))
+        array.remove(support_HT, i2)
+        if array.size(support_levels) > i2
+            array.remove(support_levels, i2)
+        line.delete(currentLine)
+        if displayLevel and array.size(support_labels) > i2
+            label currentLineLabel = array.get(support_labels, i2) 
+            array.remove(support_labels, i2)
+            label.delete(currentLineLabel)
+        int(na)
+    else if low == breakLevel and displayPerfectLevel and displayLevel and array.size(support_labels) > i2 and not onClose
+        label currentLineLabel = array.get(support_labels, i2)
+        line.set_x2(currentLine, momentCTD)
+        label.set_x(currentLineLabel, momentCTD)
+        if not str.contains(label.get_text(currentLineLabel), " PDB")
+            label.set_text(currentLineLabel, str.tostring(low) + " PDB")
+        i2 += 1
+        int(na)
+    else
+        line.set_x2(currentLine, momentCTD)
+        if displayLevel and array.size(support_labels) > i2
+            label currentLineLabel = array.get(support_labels, i2) 
+            label.set_x(currentLineLabel, momentCTD)
+        i2 += 1
+        int(na)
